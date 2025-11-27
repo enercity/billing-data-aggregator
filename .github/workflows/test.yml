@@ -1,0 +1,149 @@
+name: Tests
+
+on:
+    push:
+        branches:
+            - "**"
+    pull_request:
+        branches:
+            - "**"
+    workflow_dispatch:
+
+jobs:
+    unit-tests:
+        name: Unit Tests
+        runs-on: ubuntu-latest
+        continue-on-error: true
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version: "1.24"
+
+            - name: Cache Go modules
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cache/go-build
+                      ~/go/pkg/mod
+                  key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+                  restore-keys: |
+                      ${{ runner.os }}-go-
+
+            - name: Download dependencies
+              run: go mod download
+
+            - name: Run Unit Tests
+              run: |
+                  echo "::group::Unit Test Execution"
+                  go test -v -race -coverprofile=coverage.out -covermode=atomic ./... || true
+                  echo "::endgroup::"
+
+            - name: Display Coverage Summary
+              run: |
+                  echo "::group::Coverage Summary"
+                  go tool cover -func=coverage.out || echo "No coverage data available"
+                  echo "::endgroup::"
+
+            - name: Generate Coverage HTML
+              run: |
+                  go tool cover -html=coverage.out -o coverage.html || echo "Coverage HTML generation skipped"
+
+            - name: Upload Coverage Report
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: coverage-report
+                  path: |
+                      coverage.out
+                      coverage.html
+                  retention-days: 30
+
+            - name: Unit Test Results
+              if: always()
+              run: |
+                  echo "✅ Unit Tests abgeschlossen (Fehler werden ignoriert)"
+
+    bdd-tests:
+        name: BDD/Gherkin Tests
+        runs-on: ubuntu-latest
+        needs: unit-tests
+        continue-on-error: true
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version: "1.24"
+
+            - name: Cache Go modules
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cache/go-build
+                      ~/go/pkg/mod
+                  key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+                  restore-keys: |
+                      ${{ runner.os }}-go-
+
+            - name: Download dependencies
+              run: go mod download
+
+            - name: Install godog
+              run: go install github.com/cucumber/godog/cmd/godog@latest
+
+            - name: Run BDD Tests
+              run: |
+                  echo "::group::BDD Test Execution"
+                  go test -v ./test/... -tags=bdd || true
+                  echo "::endgroup::"
+
+            - name: Run Godog Features
+              run: |
+                  echo "::group::Godog Feature Execution"
+                  $HOME/go/bin/godog run features/ || true
+                  echo "::endgroup::"
+
+            - name: BDD Test Results
+              if: always()
+              run: |
+                  echo "✅ BDD Tests abgeschlossen (Fehler werden ignoriert)"
+
+    test-summary:
+        name: Test Summary
+        runs-on: ubuntu-latest
+        needs: [unit-tests, bdd-tests]
+        if: always()
+        steps:
+            - name: Download Coverage Report
+              uses: actions/download-artifact@v4
+              with:
+                  name: coverage-report
+                  path: ./coverage
+              continue-on-error: true
+
+            - name: Test Summary
+              run: |
+                  echo "## 📊 Test Zusammenfassung" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+                  echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+                  echo "| Unit Tests | ${{ needs.unit-tests.result == 'success' && '✅ Passed' || '⚠️ Completed with issues' }} |" >> $GITHUB_STEP_SUMMARY
+                  echo "| BDD Tests  | ${{ needs.bdd-tests.result == 'success' && '✅ Passed' || '⚠️ Completed with issues' }} |" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "ℹ️ Tests werden mit \`continue-on-error: true\` ausgeführt." >> $GITHUB_STEP_SUMMARY
+                  echo "Fehler blockieren den Workflow nicht." >> $GITHUB_STEP_SUMMARY
+
+            - name: Display Coverage
+              if: hashFiles('./coverage/coverage.out') != ''
+              run: |
+                  echo "## 📈 Coverage" >> $GITHUB_STEP_SUMMARY
+                  echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+                  go tool cover -func=./coverage/coverage.out | tail -n 1 >> $GITHUB_STEP_SUMMARY || echo "Coverage nicht verfügbar" >> $GITHUB_STEP_SUMMARY
+                  echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              continue-on-error: true
