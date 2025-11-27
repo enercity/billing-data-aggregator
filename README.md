@@ -784,7 +784,98 @@ docker build -t billing-data-aggregator:$(git describe --tags) .
 
 ### Workflow Structure
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) implements:
+The project uses three GitHub Actions workflows:
+
+#### 1. Documentation Workflow (`.github/workflows/docs.yml`)
+
+**Trigger**: Push to `main` branch + manual dispatch
+
+**Purpose**: Automatically generates and deploys project documentation to GitHub Pages
+
+**Steps**:
+
+- Generates package documentation with `go doc`
+- Copies HTML templates from `.github/templates/`
+- Replaces placeholders (repo name, commit SHA, timestamp)
+- Deploys to GitHub Pages
+
+**Output**: `https://<username>.github.io/<repo>/`
+
+**Example**:
+
+```yaml
+name: Documentation
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Generate Documentation
+        run: |
+          mkdir -p gh_pages
+          go doc -all ./... > gh_pages/packages.txt
+          cp .github/templates/*.html gh_pages/
+      - uses: actions/deploy-pages@v4
+```
+
+#### 2. Test Workflow (`.github/workflows/test.yml`)
+
+**Trigger**: Every push/PR on all branches + manual dispatch
+
+**Purpose**: Runs comprehensive test suite (unit + BDD tests)
+
+**Jobs**:
+
+1. **Unit Tests**:
+
+   - Runs all unit tests with `go test`
+   - Generates coverage report
+   - Uploads coverage as artifact (30 days retention)
+   - Uses `continue-on-error: true` (non-blocking)
+
+2. **BDD Tests**:
+
+   - Runs Gherkin/godog feature tests
+   - Tests all feature files in `features/`
+   - Uses `continue-on-error: true` (non-blocking)
+
+3. **Test Summary**:
+   - Downloads coverage artifact
+   - Creates summary in GitHub UI
+   - Shows pass/fail status per test suite
+
+**Example Output**:
+
+```
+## 📊 Test Zusammenfassung
+
+| Test Suite | Status |
+|------------|--------|
+| Unit Tests | ✅ Passed |
+| BDD Tests  | ⚠️ Completed with issues |
+
+## 📈 Coverage
+total: (statements) 87.3%
+```
+
+**Why `continue-on-error: true`?**
+Tests are informational during development. They don't block the workflow, allowing CI to complete even with test failures. This is useful during active development and BDD step implementation.
+
+#### 3. CI/CD Workflow (`.github/workflows/ci.yml`)
+
+**Trigger**: All branches + tags
+
+**Purpose**: Build, test, and deploy application
+
+**Stages**:
 
 1. **Code Quality** (PRs only):
 
@@ -998,40 +1089,101 @@ This project replaces the legacy `ed4-bi-batch-boil` service.
 - ✅ **Retry logic**: Automatic recovery from transient failures
 - ✅ **Chunked CSV export**: Memory-efficient large data handling
 - ✅ **Structured logging**: Better observability
-- ✅ **Comprehensive tests**: Higher code quality
-- ✅ **Modern CI/CD**: GitHub Actions workflows
+- ✅ **Comprehensive tests**: Higher code quality (unit + BDD)
+- ✅ **Modern CI/CD**: GitHub Actions workflows (test + docs + deploy)
 - ✅ **IaC**: Full Terraform infrastructure
+- ✅ **GitHub Pages**: Auto-generated documentation
 
-### Migration Strategy
+### Migration Checklist
 
-See detailed migration plan in Obsidian documentation:
-`/Users/anton.feldmann/lynq/billing-data-aggregator/migration-strategy.md`
+- [ ] Update environment variables (BDA\_ prefix)
+- [ ] Migrate SQL scripts to new structure
+- [ ] Update Terraform configuration
+- [ ] Configure GitHub Actions secrets
+- [ ] Enable GitHub Pages in repository settings
+- [ ] Test with development environment
+- [ ] Update monitoring dashboards
+- [ ] Schedule parallel runs (old + new)
+- [ ] Validate data consistency
+- [ ] Decommission old service
 
 ## Documentation
 
-### Obsidian Knowledge Base
+### Project Documentation
 
-Comprehensive documentation in Obsidian:
+All documentation is maintained in this repository:
 
-```text
-/Users/anton.feldmann/lynq/billing-data-aggregator/
-├── README.md                    # Overview & navigation
-├── overview.md                  # System overview
-├── architecture.md              # Architecture decisions
-├── components.md                # Component details
-├── configuration.md             # Configuration guide
-├── development.md               # Development guide
-├── deployment.md                # Deployment procedures
-├── troubleshooting.md           # Common issues & solutions
-├── migration-strategy.md        # Migration from old system
-└── api-reference.md             # Code API documentation
+- **README.md**: This file - comprehensive project overview
+- **GitHub Pages**: Auto-generated API documentation (updated on main)
+- **Feature Files**: BDD specifications in `features/` (German)
+- **GoDoc Comments**: Inline code documentation
+- **Examples**: See "Code Examples" section above
+
+### Accessing Documentation
+
+**GitHub Pages** (auto-generated):
+
+```bash
+# View online after first workflow run
+open https://<username>.github.io/<repo>/
+
+# Local preview
+go install golang.org/x/tools/cmd/godoc@latest
+godoc -http=:6060
+open http://localhost:6060/pkg/github.com/enercity/billing-data-aggregator/
+```
+
+**Package Documentation**:
+
+```bash
+# All packages
+go doc -all ./...
+
+# Specific package
+go doc ./internal/config
+
+# Specific function
+go doc ./internal/config.Load
+```
+
+### GoDoc Examples
+
+All public functions include GoDoc comments following Google Go Style:
+
+```go
+// Load reads configuration from environment variables with the BDA_ prefix.
+// It returns an error if required variables are missing or invalid.
+//
+// Required environment variables:
+//   - BDA_CLIENT_ID: Client identifier (e.g., "enercity")
+//   - BDA_ENVIRONMENT: Environment name (dev/stage/prod)
+//   - BDA_DB_HOST: PostgreSQL hostname
+//   - BDA_DB_PASSWORD: Database password
+//   - BDA_S3_BUCKET: S3 bucket for exports
+//
+// Example:
+//
+//	os.Setenv("BDA_CLIENT_ID", "enercity")
+//	os.Setenv("BDA_ENVIRONMENT", "prod")
+//	os.Setenv("BDA_DB_HOST", "db.example.com")
+//	os.Setenv("BDA_DB_PASSWORD", "secret")
+//	os.Setenv("BDA_S3_BUCKET", "billing-exports")
+//
+//	cfg, err := config.Load()
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	fmt.Println(cfg.ClientID) // Output: enercity
+func Load() (*Config, error) {
+    // Implementation
+}
 ```
 
 ### Additional Resources
 
 - **GitHub Wiki**: https://github.com/enercity/billing-data-aggregator/wiki
-- **Confluence**: Internal documentation & runbooks
-- **Jira**: Issue tracking & project management
+- **Issues**: Bug reports and feature requests
+- **Pull Requests**: Code review and discussions
 
 ## License
 
