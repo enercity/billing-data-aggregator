@@ -409,6 +409,326 @@ if err := uploader.UploadFiles(ctx, files); err != nil {
 
 ## Development
 
+## Testing
+
+The project uses a comprehensive testing strategy with multiple approaches:
+
+### Test Structure
+
+- **Unit Tests**: Testing individual components with mocks
+- **Table-Driven Tests**: Multiple scenarios in a single test
+- **BDD/Gherkin Tests**: Behavior-driven tests in German
+- **Integration Tests**: End-to-end testing with real dependencies
+
+### Quick Test Commands
+
+```bash
+# Run all tests
+make test
+
+# Run only unit tests
+make test-unit
+
+# Run BDD tests
+make test-bdd
+
+# Generate coverage report
+make test-coverage
+open coverage.html
+
+# Run tests with race detector
+go test -race ./...
+
+# Run specific package
+go test ./internal/config/... -v
+
+# Watch mode (auto-rerun on changes)
+make watch-test
+```
+
+### Unit Tests
+
+Unit tests use `testify` for assertions:
+
+```go
+package config_test
+
+import (
+    "testing"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestLoad(t *testing.T) {
+    // Setup
+    os.Setenv("BDA_CLIENT_ID", "test-client")
+    defer os.Unsetenv("BDA_CLIENT_ID")
+
+    // Execute
+    cfg, err := config.Load()
+
+    // Assert
+    require.NoError(t, err)
+    assert.Equal(t, "test-client", cfg.ClientID)
+    assert.Equal(t, 5432, cfg.Database.Port)
+}
+```
+
+### Table-Driven Tests
+
+For testing multiple scenarios efficiently:
+
+```go
+func TestValidate(t *testing.T) {
+    tests := []struct {
+        name    string
+        cfg     *Config
+        wantErr bool
+        errMsg  string
+    }{
+        {
+            name: "valid config",
+            cfg: &Config{
+                ClientID: "enercity",
+                Database: DBConfig{Host: "localhost"},
+                S3: S3Config{Bucket: "my-bucket"},
+            },
+            wantErr: false,
+        },
+        {
+            name: "missing client ID",
+            cfg: &Config{
+                Database: DBConfig{Host: "localhost"},
+            },
+            wantErr: true,
+            errMsg: "CLIENT_ID is required",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            err := tt.cfg.Validate()
+            if tt.wantErr {
+                assert.Error(t, err)
+                assert.Contains(t, err.Error(), tt.errMsg)
+            } else {
+                assert.NoError(t, err)
+            }
+        })
+    }
+}
+```
+
+### BDD/Gherkin Tests
+
+Behavior-driven tests in German using `godog`:
+
+**Feature File** (`features/configuration.feature`):
+
+```gherkin
+# language: de
+Funktionalität: Konfiguration
+
+  Szenario: Erfolgreiche Konfiguration laden
+    Angenommen die Umgebung ist sauber
+    Und die folgenden Umgebungsvariablen sind gesetzt:
+      | Variable         | Wert              |
+      | BDA_CLIENT_ID    | enercity          |
+      | BDA_ENVIRONMENT  | dev               |
+      | BDA_DB_HOST      | localhost         |
+      | BDA_DB_PASSWORD  | secret            |
+      | BDA_S3_BUCKET    | test-bucket       |
+    Wenn ich die Konfiguration lade
+    Dann sollte die Konfiguration erfolgreich geladen werden
+    Und die Client-ID sollte "enercity" sein
+    Und der Datenbankhost sollte "localhost" sein
+```
+
+**Step Definitions** (`test/bdd_test.go`):
+
+```go
+func (c *ConfigurationSteps) ichDieKonfigurationLade() error {
+    c.cfg, c.err = config.Load()
+    return nil
+}
+
+func (c *ConfigurationSteps) sollteDieKonfigurationErfolgreichGeladenWerden() error {
+    if c.err != nil {
+        return fmt.Errorf("expected no error, got: %v", c.err)
+    }
+    if c.cfg == nil {
+        return fmt.Errorf("expected config to be loaded, got nil")
+    }
+    return nil
+}
+```
+
+**Running BDD Tests**:
+
+```bash
+# Via Makefile
+make test-bdd
+
+# Direct with godog
+godog run features/
+
+# Specific feature
+godog run features/configuration.feature
+
+# With tags
+godog run --tags=@unit features/
+```
+
+### Test Coverage
+
+The project maintains high test coverage:
+
+```bash
+# Generate coverage report
+go test ./... -coverprofile=coverage.out
+go tool cover -func=coverage.out
+
+# HTML report
+go tool cover -html=coverage.out -o coverage.html
+
+# Via Makefile (opens browser)
+make test-coverage
+```
+
+**Coverage Targets**:
+
+- `internal/config`: 90%+
+- `internal/database`: 80%+
+- `internal/export`: 85%+
+- `internal/processors`: 75%+
+
+### Integration Tests
+
+Integration tests require a PostgreSQL database:
+
+```bash
+# Start test database with Docker
+docker run -d \
+  --name billing-test-db \
+  -e POSTGRES_PASSWORD=test \
+  -p 5432:5432 \
+  postgres:15
+
+# Run integration tests
+export BDA_DB_HOST=localhost
+export BDA_DB_PASSWORD=test
+go test ./test/... -v
+
+# Cleanup
+docker stop billing-test-db
+docker rm billing-test-db
+```
+
+### Test Fixtures
+
+Test data is stored in `test/fixtures/`:
+
+```text
+test/fixtures/
+├── sql/
+│   ├── schema.sql              # Test database schema
+│   └── seed.sql                # Test data
+├── csv/
+│   └── sample_export.csv       # Sample CSV data
+└── config/
+    └── test.env                # Test environment variables
+```
+
+### Continuous Integration
+
+Tests run automatically in GitHub Actions:
+
+- **Unit Tests**: On every push/PR
+- **BDD Tests**: On every push/PR (with `continue-on-error: true`)
+- **Coverage Report**: Uploaded as artifact
+- **Test Summary**: Displayed in PR comments
+
+### Test Best Practices
+
+1. **Keep tests isolated**: Use `t.Parallel()` where possible
+2. **Use table-driven tests**: For multiple scenarios
+3. **Mock external dependencies**: Database, S3, etc.
+4. **Test error paths**: Not just happy paths
+5. **Use descriptive names**: `TestExportTable_WithLargeDataset_ShouldChunk`
+6. **Clean up resources**: Use `defer` for cleanup
+7. **Test concurrency**: Use `-race` detector
+8. **Keep tests fast**: Mock slow operations
+
+### Example: Complete Test
+
+```go
+func TestCSVExporter_Export(t *testing.T) {
+    // Setup: Create temporary directory
+    tmpDir := t.TempDir()
+
+    // Setup: Mock database
+    db, mock, err := sqlmock.New()
+    require.NoError(t, err)
+    defer db.Close()
+
+    // Setup: Define expected query and result
+    rows := sqlmock.NewRows([]string{"id", "name", "amount"}).
+        AddRow(1, "Customer A", 100.50).
+        AddRow(2, "Customer B", 200.75)
+
+    mock.ExpectQuery("SELECT .* FROM customers").WillReturnRows(rows)
+
+    // Execute: Create exporter and export
+    exporter := export.NewCSVExporter(db, tmpDir, 1000000)
+    files, err := exporter.ExportTable(context.Background(), "customers", "test")
+
+    // Assert: No errors
+    require.NoError(t, err)
+    assert.Len(t, files, 1)
+
+    // Assert: File exists and has correct content
+    content, err := os.ReadFile(files[0])
+    require.NoError(t, err)
+    assert.Contains(t, string(content), "Customer A")
+    assert.Contains(t, string(content), "100.50")
+
+    // Assert: All expectations met
+    assert.NoError(t, mock.ExpectationsWereMet())
+}
+```
+
+### Testing Tips
+
+**Running Specific Tests**:
+
+```bash
+# By name pattern
+go test -run TestCSVExporter ./...
+
+# By file
+go test ./internal/export/csv_test.go
+
+# Verbose output
+go test -v ./...
+
+# Show test names only
+go test -v ./... | grep -E "^(PASS|FAIL|---)"
+```
+
+**Debugging Tests**:
+
+```bash
+# Print test output
+go test -v ./... 2>&1 | tee test.log
+
+# Run with debugger (dlv)
+dlv test ./internal/config -- -test.run TestLoad
+
+# Show coverage per function
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
+```
+
 ### Prerequisites
 
 - **Go**: 1.24 or later
@@ -429,26 +749,6 @@ go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 # Install pre-commit hooks (optional)
 pip install pre-commit
 pre-commit install
-```
-
-### Testing
-
-```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
-go test ./... -coverprofile=coverage.out
-go tool cover -html=coverage.out
-
-# Run tests with race detector
-go test -race ./...
-
-# Run specific package tests
-go test ./internal/config/... -v
-
-# Skip slow tests
-go test -short ./...
 ```
 
 ### Linting
