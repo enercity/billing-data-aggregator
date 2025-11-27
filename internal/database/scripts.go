@@ -117,8 +117,9 @@ func (e *ScriptExecutor) collectScripts(dir string) ([]string, error) {
 }
 
 func (e *ScriptExecutor) executeScript(ctx context.Context, scriptPath string) error {
-	log.Info().Str("script", scriptPath).Msg("Executing script")
+	log.Info().Str("script", scriptPath).Msg("Executing SQL script")
 
+	// #nosec G304 -- scriptPath is sanitized and part of application SQL scripts directory
 	content, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return fmt.Errorf("failed to read script: %w", err)

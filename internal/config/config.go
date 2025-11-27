@@ -1,3 +1,4 @@
+// Package config provides configuration loading and validation for the billing data aggregator.
 package config
 
 import (
@@ -7,8 +8,10 @@ import (
 	"strings"
 )
 
+// EnvPrefix is the prefix for all environment variables used by this application.
 const EnvPrefix = "BDA_"
 
+// Config holds the complete application configuration.
 type Config struct {
 	ClientID    string
 	Environment string
@@ -28,6 +31,7 @@ type Config struct {
 	DBConnMaxIdleTime int
 }
 
+// DBConfig holds database connection configuration.
 type DBConfig struct {
 	Host        string
 	Port        int
@@ -39,6 +43,7 @@ type DBConfig struct {
 	MinutesIdle int
 }
 
+// S3Config holds S3 storage configuration.
 type S3Config struct {
 	Region          string
 	Bucket          string
@@ -47,6 +52,7 @@ type S3Config struct {
 	SecretAccessKey string
 }
 
+// Load reads configuration from environment variables and returns a Config instance.
 func Load() (*Config, error) {
 	cfg := &Config{
 		ClientID:    getEnv("CLIENT_ID", ""),
@@ -98,6 +104,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// Validate checks if the configuration is valid and returns an error if not.
 func (c *Config) Validate() error {
 	if c.ClientID == "" {
 		return fmt.Errorf("CLIENT_ID is required")
@@ -114,10 +121,12 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// ConnectionString returns a PostgreSQL connection string from the config.
 func (c *Config) ConnectionString() string {
 	return c.Database.ConnectionString()
 }
 
+// ConnectionString returns a PostgreSQL connection string from the database config.
 func (c *DBConfig) ConnectionString() string {
 	sslMode := "require"
 	if detectEnvironment() == "local" {

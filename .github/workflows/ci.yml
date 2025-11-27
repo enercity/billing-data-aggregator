@@ -1,86 +1,86 @@
 name: "billing-data-aggregator: CI + Docker (ECR)"
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-    tags:
-      - "dev_*"
-      - "stage_*"
-      - "prod_*"
-      - "v*"
-  pull_request:
-    branches:
-      - main
-      - develop
+    push:
+        branches:
+            - main
+            - develop
+        tags:
+            - "dev_*"
+            - "stage_*"
+            - "prod_*"
+            - "v*"
+    pull_request:
+        branches:
+            - main
+            - develop
 
 jobs:
-  check-commit-msg:
-    if: github.event_name == 'pull_request'
-    name: "Commit Message Check"
-    uses: enercity/github-actions/.github/workflows/check-commit-msg-workflow.yaml@main
+    check-commit-msg:
+        if: github.event_name == 'pull_request'
+        name: "Commit Message Check"
+        uses: enercity/github-actions/.github/workflows/check-commit-msg-workflow.yaml@main
 
-  pre-commit:
-    if: github.event_name == 'pull_request'
-    name: "🪝 Pre-commit"
-    needs: check-commit-msg
-    uses: enercity/github-actions/.github/workflows/pre-commit-workflow.yaml@main
+    pre-commit:
+        if: github.event_name == 'pull_request'
+        name: "🪝 Pre-commit"
+        needs: check-commit-msg
+        uses: enercity/github-actions/.github/workflows/pre-commit-workflow.yaml@main
 
-  build:
-    name: "Go CI + Build artifact"
-    runs-on: ubuntu-latest
-    outputs:
-      go_version: ${{ steps.detect-go.outputs.go_version }}
+    build:
+        name: "Go CI + Build artifact"
+        runs-on: ubuntu-latest
+        outputs:
+            go_version: ${{ steps.detect-go.outputs.go_version }}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - id: detect-go
-        name: Detect Go version from go.mod
-        run: |
-          version="$(grep '^go ' go.mod | awk '{print $2}')"
-          echo "go_version=${version}" >> "$GITHUB_OUTPUT"
+            - id: detect-go
+              name: Detect Go version from go.mod
+              run: |
+                  version="$(grep '^go ' go.mod | awk '{print $2}')"
+                  echo "go_version=${version}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Go (auto from go.mod)
-        uses: actions/setup-go@v5
+            - name: Setup Go (auto from go.mod)
+              uses: actions/setup-go@v5
+              with:
+                  check-latest: true
+                  go-version: ${{ steps.detect-go.outputs.go_version }}
+
+            - name: Go test
+              run: go test ./...
+
+            - name: Build binary for Linux/amd64
+              run: GOOS=linux GOARCH=amd64 go build -o ./dist/billing-data-aggregator ./cmd/aggregator
+
+            - name: Upload Docker build artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: artifact-${{ github.sha }}-build
+                  path: |
+                      dist/billing-data-aggregator
+                      scripts/**
+                  if-no-files-found: ignore
+
+    docker:
+        name: "Docker build & push (ECR)"
+        needs: build
+        uses: enercity/github-actions/.github/workflows/docker-workflow.yaml@main
         with:
-          check-latest: true
-          go-version: ${{ steps.detect-go.outputs.go_version }}
+            push_to_ecr: ${{ startsWith(github.ref, 'refs/tags/') }}
+            extra_tags: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+            build_path: ""
+            build_args: |
+                GO_VERSION=${{ needs.build.outputs.go_version }}
+        secrets:
+            ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Go test
-        run: go test ./...
-
-      - name: Build binary for Linux/amd64
-        run: GOOS=linux GOARCH=amd64 go build -o ./dist/billing-data-aggregator ./cmd/aggregator
-
-      - name: Upload Docker build artifact
-        uses: actions/upload-artifact@v4
+    iac:
+        name: "IaC Pipeline"
+        uses: enercity/github-actions/.github/workflows/iac.yaml@main
         with:
-          name: artifact-${{ github.sha }}-build
-          path: |
-            dist/billing-data-aggregator
-            scripts/**
-          if-no-files-found: ignore
-
-  docker:
-    name: "Docker build & push (ECR)"
-    needs: build
-    uses: enercity/github-actions/.github/workflows/docker-workflow.yaml@main
-    with:
-      push_to_ecr: ${{ startsWith(github.ref, 'refs/tags/') }}
-      extra_tags: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-      build_path: ""
-      build_args: |
-        GO_VERSION=${{ needs.build.outputs.go_version }}
-    secrets:
-      ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-  iac:
-    name: "IaC Pipeline"
-    uses: enercity/github-actions/.github/workflows/iac.yaml@main
-    with:
-      trigger_on_tags: "iac/v*"
-    secrets:
-      TERRAFORM_API_TOKEN: ${{ secrets.TERRAFORM_API_TOKEN }}
+            trigger_on_tags: "iac/v*"
+        secrets:
+            TERRAFORM_API_TOKEN: ${{ secrets.TERRAFORM_API_TOKEN }}

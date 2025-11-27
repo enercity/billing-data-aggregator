@@ -35,11 +35,16 @@ func NewS3Uploader(ctx context.Context, region, bucket, prefix string) (*S3Uploa
 func (u *S3Uploader) UploadFile(ctx context.Context, localPath string) error {
 	log.Info().Str("file", localPath).Msg("Uploading to S3")
 
+	// #nosec G304 -- localPath comes from CSVExporter output, not user input
 	file, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Error().Err(err).Msg("Failed to close file")
+		}
+	}()
 
 	key := filepath.Join(u.prefix, filepath.Base(localPath))
 	maxRetries := 3

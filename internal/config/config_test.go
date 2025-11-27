@@ -6,11 +6,19 @@ import (
 )
 
 func TestLoad(t *testing.T) {
-	os.Setenv("BDA_CLIENT_ID", "test-client")
-	os.Setenv("BDA_DB_HOST", "localhost")
-	os.Setenv("BDA_DB_PASSWORD", "test-password")
-	os.Setenv("BDA_S3_BUCKET", "test-bucket")
-	defer cleanupEnv()
+	if err := os.Setenv("BDA_CLIENT_ID", "test-client"); err != nil {
+		t.Fatalf("Failed to set env: %v", err)
+	}
+	if err := os.Setenv("BDA_DB_HOST", "localhost"); err != nil {
+		t.Fatalf("Failed to set env: %v", err)
+	}
+	if err := os.Setenv("BDA_DB_PASSWORD", "test-password"); err != nil {
+		t.Fatalf("Failed to set env: %v", err)
+	}
+	if err := os.Setenv("BDA_S3_BUCKET", "test-bucket"); err != nil {
+		t.Fatalf("Failed to set env: %v", err)
+	}
+	defer cleanupEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -22,9 +30,18 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-func cleanupEnv() {
-	os.Unsetenv("BDA_CLIENT_ID")
-	os.Unsetenv("BDA_DB_HOST")
-	os.Unsetenv("BDA_DB_PASSWORD")
-	os.Unsetenv("BDA_S3_BUCKET")
+func cleanupEnv(t *testing.T) {
+	t.Helper()
+	if err := os.Unsetenv("BDA_CLIENT_ID"); err != nil {
+		t.Logf("Failed to unset env: %v", err)
+	}
+	if err := os.Unsetenv("BDA_DB_HOST"); err != nil {
+		t.Logf("Failed to unset env: %v", err)
+	}
+	if err := os.Unsetenv("BDA_DB_PASSWORD"); err != nil {
+		t.Logf("Failed to unset env: %v", err)
+	}
+	if err := os.Unsetenv("BDA_S3_BUCKET"); err != nil {
+		t.Logf("Failed to unset env: %v", err)
+	}
 }

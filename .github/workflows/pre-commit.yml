@@ -1,0 +1,109 @@
+# pre-commit.yml - Automatische Code Quality Checks
+#
+# Dieser Workflow führt Pre-commit Hooks automatisch aus und
+# committed Änderungen zurück zum Branch (z.B. Formatting).
+#
+# Trigger:
+#   - Pull Requests (alle Branches)
+#   - Push zu main Branch
+#
+# Unterschied zu release.yml pre-commit:
+#   - release.yml: Validierung only, keine Änderungen
+#   - pre-commit.yml: Auto-fix + Auto-commit
+#
+# Hooks:
+#   - Terraform Format & Validation
+#   - Terraform Docs Generation
+#   - YAML/JSON Syntax
+#   - Trailing Whitespace
+#   - End of File Fixer
+#
+# Auto-commit:
+#   Formatierte Dateien werden automatisch committed und
+#   zurück zum PR Branch gepushed.
+#
+# Skipped Hooks:
+#   - terraform_docs: Wird separat ausgeführt
+#   - terraform_validate: Wird separat ausgeführt
+#   - terraform_tflint: Wird separat ausgeführt
+#
+#   Diese können später aktiviert werden durch Entfernen aus SKIP.
+#
+# Terraform Docs:
+#   Generiert automatisch Dokumentation aus Terraform Code
+#   und injiziert sie in README.md.
+#
+# Permissions:
+#   contents: write - Benötigt für Auto-commit
+#
+# Copyright: LynqTech GmbH
+# Maintainer: Datalynx/DevOps Team
+
+name: pre-commit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout mit dynamischer Branch-Selektion
+      #
+      # Bei Push zu main: Verwendet main Branch
+      # Bei PR: Verwendet PR Head Branch
+      #
+      # Dies ermöglicht Auto-commits zurück zum korrekten Branch
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && 'main' || github.event.pull_request.head.ref }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      # Pre-commit Hooks ausführen
+      #
+      # Führt alle konfigurierten Hooks aus .pre-commit-config.yaml aus,
+      # außer den in SKIP aufgelisteten.
+      #
+      # SKIP Environment Variable:
+      #   Hooks die manuell ausgeführt werden oder noch nicht ready sind.
+      #   Entfernen Sie Hooks aus SKIP wenn sie aktiviert werden sollen.
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
+        env:
+          SKIP: terraform_docs,terraform_validate,terraform_tflint # enable these later on
+
+      # Terraform Documentation Generation
+      #
+      # Generiert automatisch Terraform Dokumentation:
+      #   - Inputs (Variables)
+      #   - Outputs
+      #   - Resources
+      #   - Modules
+      #
+      # Output:
+      #   Dokumentation wird in README.md injiziert zwischen
+      #   <!-- BEGIN_TF_DOCS --> und <!-- END_TF_DOCS --> Tags
+      #
+      # Configuration:
+      #   Gesteuert über .terraform-docs.yml im Repo Root
+      #
+      # Git Push:
+      #   Änderungen werden automatisch committed und gepushed
+      - name: Render terraform docs inside the README.md and push changes back to PR branch
+        uses: terraform-docs/gh-actions@v1.4.1
+        with:
+          working-dir: .
+          find-dir: .
+          output-file: README.md
+          output-method: inject
+          git-push: "true"
