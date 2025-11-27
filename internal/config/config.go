@@ -16,12 +16,16 @@ type Config struct {
 	Database    DBConfig
 	S3          S3Config
 	Systems     []string
+	IgnoreSystems []string
 	MaxRowSizeFile int
 	ScriptsDir  string
 	InitScriptsDir string
 	ArchiveScriptsDir string
 	HistoryScriptsDir string
 	PrechecksScriptsDir string
+	DBMaxConnections int
+	DBMaxIdleConns int
+	DBConnMaxIdleTime int
 }
 
 type DBConfig struct {
@@ -66,8 +70,12 @@ func Load() (*Config, error) {
 			SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
 		},
 		Systems:        parseSystems(getEnv("SYSTEMS", "tripica,bookkeeper")),
+		IgnoreSystems:  parseSystems(getEnv("IGNORE_SYSTEMS", "")),
 		MaxRowSizeFile: getEnvInt("MAX_ROW_SIZE_FILE", 1000000),
 		ScriptsDir:     getEnv("SCRIPTS_DIR", "/app/scripts"),
+		DBMaxConnections: getEnvInt("DB_MAX_CONNS", 4),
+		DBMaxIdleConns: getEnvInt("DB_MAX_IDLE", 0),
+		DBConnMaxIdleTime: getEnvInt("DB_MINUTES_IDLE", 5),
 	}
 
 	if cfg.InitScriptsDir == "" {
@@ -104,6 +112,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("S3_BUCKET is required")
 	}
 	return nil
+}
+
+func (c *Config) ConnectionString() string {
+	return c.Database.ConnectionString()
 }
 
 func (c *DBConfig) ConnectionString() string {

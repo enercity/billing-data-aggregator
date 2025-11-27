@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/enercity/billing-data-aggregator/internal/config"
+	"github.com/enercity/billing-data-aggregator/internal/database"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -82,15 +83,44 @@ func setupLogging(cfg *config.Config) {
 		log.Logger = log.With().Str("batch_job_id", jobID).Logger()
 	}
 }
-
 func run(ctx context.Context, cfg *config.Config) error {
-	log.Info().Msg("Application logic not yet implemented")
-	
-	log.Info().
-		Strs("systems", cfg.Systems).
-		Str("db_host", cfg.Database.Host).
-		Str("s3_bucket", cfg.S3.Bucket).
-		Msg("Configuration loaded")
-	
+	// Initialize database connection
+	log.Info().Msg("Initializing database connection")
+	db, err := database.NewConnection(
+		cfg.ConnectionString(),
+		cfg.DBMaxConnections,
+		cfg.DBMaxIdleConns,
+		cfg.DBConnMaxIdleTime,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer db.Close()
+
+	// Create script executor
+	executor := database.NewScriptExecutor(db, cfg.IgnoreSystems)
+
+	// Execute initialization scripts
+	log.Info().Msg("Executing initialization scripts")
+	if err := executor.ExecuteScriptsInDir(ctx, "scripts/init"); err != nil {
+		return fmt.Errorf("failed to execute init scripts: %w", err)
+	}
+
+	// TODO: Run processors (Tripica, Bookkeeper)
+	log.Info().Msg("Processors not yet implemented")
+
+	// TODO: Export results to CSV
+	log.Info().Msg("Export not yet implemented")
+
+	// TODO: Upload to S3
+	log.Info().Msg("S3 upload not yet implemented")
+
+	// Execute archive scripts
+	log.Info().Msg("Executing archive scripts")
+	if err := executor.ExecuteScriptsInDir(ctx, "scripts/archive"); err != nil {
+		return fmt.Errorf("failed to execute archive scripts: %w", err)
+	}
+
+	log.Info().Msg("Job completed successfully")
 	return nil
 }
