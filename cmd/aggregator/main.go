@@ -9,6 +9,7 @@ import (
 
 	"github.com/enercity/billing-data-aggregator/internal/config"
 	"github.com/enercity/billing-data-aggregator/internal/database"
+	"github.com/enercity/billing-data-aggregator/internal/processors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -99,16 +100,34 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	// Create script executor
 	executor := database.NewScriptExecutor(db, cfg.IgnoreSystems)
-
 	// Execute initialization scripts
 	log.Info().Msg("Executing initialization scripts")
 	if err := executor.ExecuteScriptsInDir(ctx, "scripts/init"); err != nil {
 		return fmt.Errorf("failed to execute init scripts: %w", err)
 	}
 
-	// TODO: Run processors (Tripica, Bookkeeper)
-	log.Info().Msg("Processors not yet implemented")
+	// Run processors based on configured systems
+	log.Info().Strs("systems", cfg.Systems).Msg("Running processors")
+	for _, system := range cfg.Systems {
+		var processor processors.Processor
+		
+		switch system {
+		case "tripica":
+			processor = processors.NewTripicaProcessor(db, executor, "scripts")
+		case "bookkeeper":
+			processor = processors.NewBookkeeperProcessor(db, executor, "scripts")
+		default:
+			log.Warn().Str("system", system).Msg("Unknown system, skipping")
+			continue
+		}
+		
+		log.Info().Str("system", processor.Name()).Msg("Processing system")
+		if err := processor.Process(ctx); err != nil {
+			return fmt.Errorf("processor %s failed: %w", processor.Name(), err)
+		}
+	}
 
+	// TODO: Export results to CSV
 	// TODO: Export results to CSV
 	log.Info().Msg("Export not yet implemented")
 
