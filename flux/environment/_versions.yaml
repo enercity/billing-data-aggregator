@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-versions
+  namespace: flux-system
+data:
+  version_billing_data_aggregator_tf: "~ 1.0.0"
+  container_image_tag: "prod_1.0.0"

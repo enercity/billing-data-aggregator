@@ -1,0 +1,26 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: billing-data-aggregator
+  namespace: flux-system
+  labels:
+    k8s.lynq.tech/squad: datalynx
+spec:
+  interval: 30m
+  path: flux-apps/service-stacks/billing-data-aggregator
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: fluxcd-environment
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: "init"
+        optional: false
+      - kind: ConfigMap
+        name: service-versions
+        optional: false
+      - kind: Secret
+        name: billing-data-aggregator-tf-outputs
+        optional: true
+  patches: []

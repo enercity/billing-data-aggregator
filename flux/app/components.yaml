@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: billing-data-aggregator
+  labels:
+    k8s.lynq.tech/squad: datalynx

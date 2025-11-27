@@ -1,0 +1,102 @@
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  labels:
+    k8s.lynq.tech/lifecycle: stable
+    k8s.lynq.tech/squad: datalynx
+  name: billing-data-aggregator-iac
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*.auto.tfvars
+    # include specific
+    !/_global.auto.tfvars
+  interval: 5m
+  provider: aws
+  ref:
+    semver: ${quote}${version_billing_data_aggregator_tf}${quote}
+  url: oci://367771023052.dkr.ecr.eu-central-1.amazonaws.com/iac/enercity/billing-data-aggregator
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  labels:
+    k8s.lynq.tech/lifecycle: stable
+    k8s.lynq.tech/squad: datalynx
+    app.kubernetes.io/name: billing-data-aggregator
+  annotations:
+    k8s.lynq.tech/application: billing-data-aggregator
+  name: billing-data-aggregator
+  namespace: flux-system
+spec:
+  alwaysCleanupRunnerPod: true
+  approvePlan: "" # auto
+  disableDriftDetection: true
+  backendConfig:
+    customConfiguration: |
+      backend "s3" {
+        region         = "eu-central-1"
+        bucket         = "lqt-tf-states"
+        key            = "${clientId}/${environment}/service-stack/tf-controller/billing-data-aggregator.tfstate"
+        dynamodb_table = "lqt-tf-states-locks"
+        encrypt        = true
+        role_arn       = "arn:aws:iam::367771023052:role/tf-state-${clientId}-${environment}"
+      }
+  fileMappings:
+    - location: home
+      path: .terraformrc
+      secretRef:
+        key: credential
+        name: terraformrc-registry-token
+  writeOutputsToSecret:
+    name: billing-data-aggregator-tf-outputs
+  interval: 1h
+  path: ./terraform
+  runnerPodTemplate:
+    metadata:
+      labels:
+        k8s.lynq.tech/lifecycle: stable
+        k8s.lynq.tech/squad: datalynx
+        app.kubernetes.io/name: billing-data-aggregator
+      annotations:
+        k8s.lynq.tech/application: billing-data-aggregator
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "300M"
+        limits: {}
+      priorityClassName: "terraform"
+  sourceRef:
+    kind: OCIRepository
+    name: billing-data-aggregator-iac
+    namespace: flux-system
+  storeReadablePlan: human
+  vars:
+    - name: batch_container_image
+      value: "367771023052.dkr.ecr.eu-central-1.amazonaws.com/billing-data-aggregator:${container_image_tag:=latest}"
+    - name: batch_ce_subnet_ids
+      valueFrom:
+        kind: ConfigMap
+        name: init
+        key: subnet_private_ids
+    - name: batch_ce_security_group_ids
+      valueFrom:
+        kind: ConfigMap
+        name: init
+        key: batch_security_group_ids
+    - name: batch_launch_template_name
+      value: "batch-launch-template-${clientId}-${environment}"
+    - name: batch_vcpu
+      value: "1"
+    - name: batch_memory
+      value: "2048"
+    - name: batch_env
+      value: |
+        {
+          "BDA_CLIENT_ID": "${clientId}",
+          "BDA_ENVIRONMENT": "${environment}",
+          "BDA_LOG_LEVEL": "info"
+        }
