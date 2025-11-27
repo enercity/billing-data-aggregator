@@ -928,46 +928,404 @@ git push origin iac/v1.0.0
 
 ## Deployment
 
+### Overview
+
+The billing-data-aggregator uses a **GitOps** approach with FluxCD and Terraform:
+
+1. **Source Code**: GitHub Repository
+2. **Container Images**: AWS ECR (pushed by GitHub Actions)
+3. **Infrastructure**: Terraform (managed by FluxCD Terraform Controller)
+4. **Execution**: AWS Batch (scheduled via EventBridge)
+
+### Architecture
+
+```text
+GitHub Repository
+    ├── terraform/           → Terraform Code
+    ├── flux/               → FluxCD Manifests
+    ├── Dockerfile          → Container Definition
+    └── .github/workflows/  → CI/CD Pipelines
+        ↓
+GitHub Actions (CI/CD)
+    ├── Build & Test
+    ├── Docker Build
+    └── ECR Push (on tag)
+        ↓
+AWS ECR
+    ├── iac/enercity/billing-data-aggregator  (Terraform as OCI)
+    └── billing-data-aggregator               (Container Image)
+        ↓
+FluxCD (Kubernetes)
+    ├── OCIRepository (watches ECR for Terraform updates)
+    └── Terraform Resource (applies infrastructure)
+        ↓
+AWS Batch
+    ├── Job Definition (Container + Resources)
+    ├── Job Queue (Execution Queue)
+    └── Compute Environment (EC2 Instances)
+        ↓
+EventBridge Schedule
+    └── Daily 02:00 UTC → Submit Batch Job
+        ↓
+CloudWatch Logs
+    └── /aws/batch/billing-data-aggregator
+```
+
 ### AWS Batch Runtime
 
 The application runs as an AWS Batch job:
 
-- **Schedule**: Daily at 2:00 AM UTC (configurable)
-- **Compute**: Fargate (serverless containers)
-- **Memory**: 2 GB (adjustable in Terraform)
-- **vCPUs**: 1 (adjustable in Terraform)
-- **Timeout**: 2 hours
-- **Retries**: 2 attempts on failure
+- **Schedule**: Daily at 02:00 UTC (04:00 CET / 03:00 CEST)
+- **Compute**: EC2 (via Launch Template)
+- **Memory**: 2048 MB (adjustable in Terraform variables)
+- **vCPUs**: 1 (adjustable in Terraform variables)
+- **Timeout**: 2 hours (configured in Batch Job Definition)
+- **Retries**: 2 attempts on failure (exponential backoff)
 
-### Infrastructure
+**Runtime Environment**:
 
-Infrastructure is managed via Terraform:
+- Container Image from ECR
+- Environment variables injected by Terraform
+- Secrets loaded from AWS Systems Manager Parameter Store
+- Logs streamed to CloudWatch Logs
+- S3 access via IAM Role
+
+### Terraform Infrastructure
+
+Infrastructure is managed via Terraform in `terraform/` directory.
+
+**Resources Created**:
+
+| Resource                      | Purpose                         | Configuration                        |
+| ----------------------------- | ------------------------------- | ------------------------------------ |
+| AWS Batch Compute Environment | EC2 instances for job execution | Uses external Launch Template        |
+| AWS Batch Job Queue           | Job submission queue            | Priority 1, ENABLED state            |
+| AWS Batch Job Definition      | Container configuration         | Image, CPU, Memory, Env Vars         |
+| EventBridge Rule              | Daily schedule trigger          | Cron: `cron(0 2 * * ? *)`            |
+| IAM Role (Events)             | EventBridge → Batch permissions | `batch:SubmitJob`                    |
+| IAM Role (IRSA)               | Kubernetes ServiceAccount       | EKS migration support                |
+| CloudWatch Log Group          | Job execution logs              | `/aws/batch/billing-data-aggregator` |
+
+**Local Terraform Execution**:
 
 ```bash
 cd terraform/
 
-# Initialize Terraform
+# Initialize
 terraform init
 
-# Plan changes
-terraform plan
+# Plan (with variables)
+terraform plan \
+  -var="batch_container_image=367771023052.dkr.ecr.eu-central-1.amazonaws.com/billing-data-aggregator:prod_1.0.0" \
+  -var='batch_ce_subnet_ids=["subnet-xxx","subnet-yyy"]' \
+  -var='batch_ce_security_group_ids=["sg-xxx"]' \
+  -var="batch_launch_template_name=batch-launch-template-enercity-prod"
 
-# Apply changes
+# Apply
 terraform apply
 ```
 
-Key resources:
-
-- **AWS Batch Job Definition**: Container configuration
-- **AWS Batch Job Queue**: Job execution queue
-- **CloudWatch Events Rule**: Daily schedule
-- **IAM Roles**: Execution permissions
-- **S3 Bucket**: Export storage with lifecycle policies
-- **ECR Repository**: Docker image storage
+**Note**: In production, Terraform is executed by FluxCD Terraform Controller, not manually.
 
 ### FluxCD Deployment
 
-Deployment via FluxCD + Terraform Controller:
+Deployment via **FluxCD Terraform Controller** (GitOps approach).
+
+**FluxCD Structure** (`flux/` directory):
+
+```text
+flux/
+├── app/
+│   ├── kustomization.yaml      # FluxCD resource loader
+│   ├── components.yaml         # Namespace definition
+│   └── terraform.yaml          # Terraform Controller config
+├── environment/
+│   ├── billing-data-aggregator.yaml  # Environment integration
+│   └── _versions.yaml          # Version management
+└── README.md                   # FluxCD documentation
+```
+
+**Workflow**:
+
+1. **Tag Terraform Code**: `git tag iac/v1.0.0 && git push origin iac/v1.0.0`
+2. **CI/CD Builds OCI Image**: GitHub Actions packages Terraform as OCI artifact
+3. **Push to ECR**: OCI image pushed to `iac/enercity/billing-data-aggregator`
+4. **FluxCD Detects Update**: OCIRepository polls ECR for new versions
+5. **Terraform Controller**: Automatically runs `terraform apply`
+6. **AWS Resources Updated**: Batch Job Definition, Schedule, etc.
+
+**Version Management** (`flux/environment/_versions.yaml`):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-versions
+  namespace: flux-system
+data:
+  # Terraform version (semantic versioning)
+  version_billing_data_aggregator_tf: "~ 1.0.0" # Accept 1.0.x
+
+  # Container image tag
+  container_image_tag: "prod_1.0.0"
+```
+
+**Terraform Variables Injection** (from FluxCD):
+
+```yaml
+# flux/app/terraform.yaml
+vars:
+  - name: batch_container_image
+    value: "367771023052.dkr.ecr.eu-central-1.amazonaws.com/billing-data-aggregator:${container_image_tag}"
+  - name: batch_ce_subnet_ids
+    valueFrom:
+      kind: ConfigMap
+      name: init
+      key: subnet_private_ids
+  - name: batch_env
+    value: |
+      {
+        "BDA_CLIENT_ID": "${clientId}",
+        "BDA_ENVIRONMENT": "${environment}"
+      }
+```
+
+**Integration with `fluxcd-environment` Repository**:
+
+The `flux/` directory contents are referenced in the central FluxCD environment repository:
+
+```bash
+# In fluxcd-environment repository
+flux-apps/service-stacks/billing-data-aggregator/
+├── kustomization.yaml
+├── components.yaml
+└── terraform.yaml
+```
+
+**Monitoring Deployment**:
+
+```bash
+# Check Terraform Resource status
+kubectl get terraform billing-data-aggregator -n flux-system
+
+# View Terraform logs
+kubectl logs -n flux-system \
+  -l infra.contrib.fluxcd.io/terraform=billing-data-aggregator \
+  --tail=100 --follow
+
+# Check Terraform plan
+kubectl describe terraform billing-data-aggregator -n flux-system
+
+# View outputs
+kubectl get secret billing-data-aggregator-tf-outputs -n flux-system -o yaml
+```
+
+### Deployment Workflow
+
+#### Development Deployment
+
+```bash
+# 1. Develop and test locally
+make test
+make lint
+
+# 2. Commit changes
+git add .
+git commit -m "feat: add new feature"
+git push
+
+# 3. Tag for development
+git tag dev_1.0.0
+git push origin dev_1.0.0
+
+# 4. GitHub Actions builds and pushes to ECR
+# 5. Update FluxCD version
+# In flux/environment/_versions.yaml
+container_image_tag: "dev_1.0.0"
+
+# 6. Commit and push
+git commit -am "chore: update dev version"
+git push
+```
+
+#### Production Deployment
+
+```bash
+# 1. Tag container image for production
+git tag prod_1.0.0
+git push origin prod_1.0.0
+
+# 2. Tag Terraform infrastructure
+git tag iac/v1.0.0
+git push origin iac/v1.0.0
+
+# 3. Update versions in FluxCD
+# In flux/environment/_versions.yaml
+version_billing_data_aggregator_tf: "~ 1.0.0"
+container_image_tag: "prod_1.0.0"
+
+# 4. Commit and push
+git commit -am "chore: production release 1.0.0"
+git push
+
+# 5. FluxCD automatically applies changes
+# 6. Monitor deployment
+kubectl logs -n flux-system -l app.kubernetes.io/name=billing-data-aggregator --follow
+
+# 7. Verify Batch Job
+aws batch describe-job-definitions \
+  --job-definition-name billing-data-aggregator-enercity-prod \
+  --status ACTIVE
+```
+
+#### Rollback
+
+```bash
+# 1. Revert version in _versions.yaml
+version_billing_data_aggregator_tf: "1.0.0"  # Previous version
+container_image_tag: "prod_0.9.0"
+
+# 2. Commit and push
+git commit -am "chore: rollback to 0.9.0"
+git push
+
+# 3. FluxCD automatically applies rollback
+# 4. Verify
+kubectl get terraform billing-data-aggregator -n flux-system
+```
+
+### Manual Job Execution
+
+While jobs are scheduled automatically, you can trigger them manually:
+
+```bash
+# Submit job manually
+aws batch submit-job \
+  --job-name "billing-data-aggregator-manual-$(date +%s)" \
+  --job-queue billing-data-aggregator-enercity-prod-queue \
+  --job-definition billing-data-aggregator-enercity-prod
+
+# Check job status
+JOB_ID="<job-id-from-previous-command>"
+aws batch describe-jobs --jobs $JOB_ID
+
+# View logs
+aws logs tail /aws/batch/billing-data-aggregator --follow
+```
+
+### Environment-Specific Configuration
+
+Configuration per client and environment is managed in `terraform/configuration.tf`:
+
+```hcl
+locals {
+  configuration = {
+    default = {
+      batch_enabled    = true
+      schedule_enabled = true
+    }
+    enercity = {
+      prod = {
+        batch_enabled    = true
+        schedule_enabled = true  # Daily automatic execution
+      }
+      stage = {
+        batch_enabled    = true
+        schedule_enabled = true  # Daily automatic execution
+      }
+    }
+    lynqtech = {
+      dev = {
+        batch_enabled    = true
+        schedule_enabled = false  # Manual execution only
+      }
+    }
+  }
+}
+```
+
+### Troubleshooting Deployment
+
+**Terraform fails to apply**:
+
+```bash
+# Check Terraform Controller status
+kubectl describe terraform billing-data-aggregator -n flux-system
+
+# View runner pod logs
+kubectl logs -n flux-system \
+  -l infra.contrib.fluxcd.io/terraform=billing-data-aggregator
+
+# Check Terraform plan
+kubectl get terraform billing-data-aggregator -n flux-system -o yaml
+```
+
+**Container image not found**:
+
+```bash
+# Verify ECR image exists
+aws ecr describe-images \
+  --repository-name billing-data-aggregator \
+  --image-ids imageTag=prod_1.0.0
+
+# Check ECR authentication
+aws ecr get-login-password | docker login \
+  --username AWS \
+  --password-stdin 367771023052.dkr.ecr.eu-central-1.amazonaws.com
+```
+
+**Schedule not triggering**:
+
+```bash
+# Check EventBridge rule
+aws events describe-rule \
+  --name billing-data-aggregator-enercity-prod-schedule
+
+# Enable rule if disabled
+aws events enable-rule \
+  --name billing-data-aggregator-enercity-prod-schedule
+
+# Check rule targets
+aws events list-targets-by-rule \
+  --rule billing-data-aggregator-enercity-prod-schedule
+```
+
+### Infrastructure Documentation
+
+Detailed infrastructure documentation:
+
+- **Terraform**: See `terraform/README.md`
+- **FluxCD**: See `flux/README.md`
+- **AWS Batch**: See AWS Console or Terraform outputs
+
+### Security Considerations
+
+**Secrets Management**:
+
+- Database passwords: AWS Systems Manager Parameter Store
+- AWS credentials: IAM Role (no hardcoded keys)
+- Container registry: ECR with IAM authentication
+
+**Network Isolation**:
+
+- Batch compute in private subnets
+- Security groups restrict traffic
+- S3 access via VPC endpoint (optional)
+
+**Audit & Compliance**:
+
+- CloudWatch Logs retention: 30 days (configurable)
+- CloudTrail logs all API calls
+- S3 bucket encryption: AES-256
+- Terraform state encryption: S3 server-side
+
+### Related Documentation
+
+- [Terraform README](terraform/README.md) - Infrastructure details
+- [FluxCD README](flux/README.md) - GitOps workflow
+- [GitHub Actions](.github/workflows/) - CI/CD pipelines
+- [AWS Batch Docs](https://docs.aws.amazon.com/batch/)
+- [FluxCD Terraform Controller](https://flux-iac.github.io/tofu-controller/)
 
 1. Terraform code in `terraform/` directory
 2. FluxCD HelmRelease triggers Terraform

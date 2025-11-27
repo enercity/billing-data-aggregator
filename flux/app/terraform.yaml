@@ -1,3 +1,51 @@
+# Terraform Controller Configuration for billing-data-aggregator
+#
+# This manifest configures the FluxCD Terraform Controller to manage
+# AWS Batch infrastructure via GitOps. The Terraform code is stored
+# as an OCI artifact in ECR and automatically applied when versions change.
+#
+# Architecture:
+#   1. OCIRepository watches ECR for Terraform OCI images
+#   2. Terraform resource executes terraform apply automatically
+#   3. State is stored in S3 with DynamoDB locking
+#   4. Outputs are written to a Kubernetes Secret
+#
+# Version Management:
+#   Versions are controlled via flux/environment/_versions.yaml:
+#   - version_billing_data_aggregator_tf: Terraform code version (semver)
+#   - container_image_tag: Container image tag for Job Definition
+#
+# Example Versions:
+#   version_billing_data_aggregator_tf: "~ 1.0.0"  # Accept 1.0.x
+#   container_image_tag: "prod_1.0.0"             # Exact container tag
+#
+# Deployment Workflow:
+#   1. Tag Terraform code: git tag iac/v1.0.0
+#   2. CI/CD builds OCI image and pushes to ECR
+#   3. FluxCD detects new version via OCIRepository
+#   4. Terraform Controller applies changes automatically
+#   5. AWS Batch resources are updated
+#
+# Manual Intervention:
+#   To temporarily suspend automation:
+#   kubectl patch terraform billing-data-aggregator -n flux-system \
+#     --type=merge -p '{"spec":{"suspend":true}}'
+#
+# Monitoring:
+#   kubectl get terraform billing-data-aggregator -n flux-system
+#   kubectl describe terraform billing-data-aggregator -n flux-system
+#   kubectl logs -n flux-system -l infra.contrib.fluxcd.io/terraform=billing-data-aggregator
+#
+# Security:
+#   - Terraform state encrypted in S3
+#   - DynamoDB state locking prevents concurrent modifications
+#   - IAM role for cross-account access
+#   - Registry credentials via terraformrc-registry-token Secret
+#
+# Copyright: LynqTech GmbH / Enercity AG
+# Maintainer: Billing Data / DevOps Team
+# Documentation: flux/README.md
+
 apiVersion: source.toolkit.fluxcd.io/v1beta2
 kind: OCIRepository
 metadata:
