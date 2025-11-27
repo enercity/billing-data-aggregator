@@ -1,0 +1,40 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  ci-release:
+    name: CI and Release
+    uses: enercity/github-actions/.github/workflows/go-ci-release.yml@main
+    with:
+      # Go version (auto-detect from go.mod)
+      go_version: "auto"
+      
+      # Run BDD tests if *.feature files exist
+      run_bdd: false
+      
+      # Release on tags
+      release_on_tags: true
+      prerelease_regex: "-(rc|beta|alpha|shadow)"
+      
+      # GoReleaser args
+      goreleaser_args: "release --clean"
+      
+      # ECR configuration
+      ecr_registry: "367771023052.dkr.ecr.eu-central-1.amazonaws.com"
+      image_repository: "billing-data-aggregator"
+    
+    secrets:
+      # AWS OIDC role for ECR push
+      AWS_ROLE: ${{ secrets.AWS_ROLE_BILLING_DATA_AGGREGATOR }}

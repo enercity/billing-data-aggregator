@@ -1,0 +1,79 @@
+version: 2
+
+project_name: billing-data-aggregator
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod vendor
+
+builds:
+  - id: aggregator
+    main: ./cmd/aggregator
+    binary: billing-data-aggregator
+
+    env:
+      - CGO_ENABLED=0
+      - GOFLAGS=-mod=vendor
+
+    goos:
+      - linux
+
+    goarch:
+      - amd64
+      - arm64
+
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+  groups:
+    - title: Features
+      regexp: "^feat:"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^fix:"
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: enercity
+    name: billing-data-aggregator
+
+  prerelease: auto
+
+  name_template: "Release {{.Version}}"
+
+  header: |
+    ## Billing Data Aggregator {{.Version}}
+
+    **Release Date**: {{.Date}}
+
+    ### Changes
