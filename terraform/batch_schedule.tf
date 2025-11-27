@@ -48,7 +48,7 @@
  * Beispiel-Schedules:
  *   cron(0 2 * * ? *)        - Täglich 02:00 UTC
  *   cron(30 6 * * ? *)       - Täglich 06:30 UTC
- *   cron(0 */6 * * ? *)      - Alle 6 Stunden
+ *   cron(0 star/6 * * ? *)      - Alle 6 Stunden
  *   cron(0 8 ? * MON-FRI *)  - Werktags 08:00 UTC
  *   cron(0 0 1 * ? *)        - Monatlich am 1. um Mitternacht
  *
