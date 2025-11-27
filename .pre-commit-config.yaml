@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-xml
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: debug-statements
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+      - id: fix-byte-order-marker
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.100.1 # Get the latest from: https://github.com/antonbabenko/pre-commit-terraform/releases
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_docs
+        args:
+          - --args=--config=.terraform-docs.yml
+          - --hook-config=--create-file-if-not-exist=true # Boolean. true or false
+      - id: terraform_validate
+      - id: terraform_tflint
+        args:
+          - "--args=--call-module-type=all"
+          - "--args=--config=__GIT_WORKING_DIR__/.tflint.hcl"
+          - "--args=--only=terraform_deprecated_interpolation"
+          - "--args=--only=terraform_deprecated_index"
+          - "--args=--only=terraform_unused_declarations"
+          - "--args=--only=terraform_comment_syntax"
+          - "--args=--only=terraform_typed_variables"
+          - "--args=--only=terraform_naming_convention"
+          - "--args=--only=terraform_required_version"
+          - "--args=--only=terraform_required_providers"
+          - "--args=--only=terraform_standard_module_structure"
+          - "--args=--only=terraform_workspace_remote"
+          - "--args=--only=terraform_unused_required_providers"
