@@ -9,6 +9,7 @@ import (
 
 	"github.com/enercity/billing-data-aggregator/internal/config"
 	"github.com/enercity/billing-data-aggregator/internal/database"
+	"github.com/enercity/billing-data-aggregator/internal/export"
 	"github.com/enercity/billing-data-aggregator/internal/processors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -127,12 +128,33 @@ func run(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	// TODO: Export results to CSV
-	// TODO: Export results to CSV
-	log.Info().Msg("Export not yet implemented")
+	// Export results to CSV
+	log.Info().Msg("Exporting results to CSV")
+	exporter := export.NewCSVExporter(db.DB(), "/tmp/exports", cfg.MaxRowSizeFile)
+	
+	var allFiles []string
+	for _, system := range cfg.Systems {
+		tableName := fmt.Sprintf("%s_results", system)
+		files, err := exporter.ExportTable(ctx, tableName, system)
+		if err != nil {
+			log.Warn().Err(err).Str("table", tableName).Msg("Failed to export table, continuing")
+		} else {
+			allFiles = append(allFiles, files...)
+		}
+	}
 
-	// TODO: Upload to S3
-	log.Info().Msg("S3 upload not yet implemented")
+	// Upload to S3
+	log.Info().Int("files", len(allFiles)).Msg("Uploading files to S3")
+	uploader, err := export.NewS3Uploader(ctx, cfg.S3.Region, cfg.S3.Bucket, fmt.Sprintf("%s/%s", cfg.ClientID, cfg.Environment))
+	if err != nil {
+		return fmt.Errorf("failed to create S3 uploader: %w", err)
+	}
+	
+	if len(allFiles) > 0 {
+		if err := uploader.UploadFiles(ctx, allFiles); err != nil {
+			return fmt.Errorf("failed to upload files: %w", err)
+		}
+	}
 
 	// Execute archive scripts
 	log.Info().Msg("Executing archive scripts")
